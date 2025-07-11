@@ -1,15 +1,31 @@
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
+import uvicorn
 import requests
 import tensorflow as tf
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from PIL import Image
 import io
 import numpy as np
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# Ganti dengan URL frontend Vercel Anda
+origins = [
+    "https://ui-padi-cnn.vercel.app",  # WAJIB: Masukkan URL Vercel Anda di sini
+    "http://localhost:8080",
+    "null"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"], # Cukup izinkan metode yang dipakai
+    allow_headers=["*"],
+)
 # URL model dari GitHub Releases
 MODEL_URL = "https://github.com/adamrizz/padi-cnn/releases/download/v1.0/daun_padi_cnn_model.keras"
 MODEL_PATH_LOCAL = "daun_padi_cnn_model.keras"
@@ -60,20 +76,32 @@ async def home():
 
 @app.post("/predict/")
 async def predict_image(file: UploadFile = File(...)):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File harus berupa gambar.")
-
     try:
+        print("STEP 1: File diterima:", file.filename)
+        if not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="File harus berupa gambar.")
+
         contents = await file.read()
+        print("STEP 2: File dibaca, panjang:", len(contents))
+
         image = Image.open(io.BytesIO(contents)).convert("RGB")
+        print("STEP 3: Gambar dikonversi ke RGB")
+
         image = image.resize((IMAGE_WIDTH, IMAGE_HEIGHT))
+        print("STEP 4: Gambar diresize")
+
         img_array = np.expand_dims(np.array(image), axis=0) / 255.0
+        print("STEP 5: Gambar diproses menjadi array")
 
         predictions = model.predict(img_array)
+        print("STEP 6: Prediksi selesai")
+
         score = tf.nn.softmax(predictions[0])
         predicted_index = int(np.argmax(score))
         predicted_label = CLASS_NAMES[predicted_index]
         confidence = float(np.max(score))
+
+        print("STEP 7: Prediksi:", predicted_label, "Confidence:", confidence)
 
         return {
             "filename": file.filename,
@@ -85,4 +113,9 @@ async def predict_image(file: UploadFile = File(...)):
         }
 
     except Exception as e:
+        print("❌ ERROR:", str(e))
         raise HTTPException(status_code=500, detail=f"Terjadi kesalahan saat memproses gambar: {e}")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))  # default ke 8000 jika tidak diset Railway
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
